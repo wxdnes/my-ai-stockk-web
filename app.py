@@ -15,46 +15,57 @@ from datetime import datetime, timedelta
 # --- Page Configuration ---
 st.set_page_config(page_title="AI Stock Predictor Pro", layout="wide")
 
-# --- Sentiment Analysis Function ---
-def get_sentiment(ticker):
+# --- Enhanced News & Sentiment Function ---
+def get_detailed_news(ticker, num_news):
     analyzer = SentimentIntensityAnalyzer()
     url = f'https://finance.yahoo.com/quote/{ticker}/news'
     headers = {'User-Agent': 'Mozilla/5.0'}
+    news_list = []
+    
     try:
         response = requests.get(url, headers=headers)
         soup = BeautifulSoup(response.text, 'html.parser')
-        headlines = [h.text for h in soup.find_all('h3')[:10]]
-        scores = [analyzer.polarity_scores(text)['compound'] for text in headlines]
-        return np.mean(scores) if scores else 0.0
+        # ค้นหาหัวข้อข่าวจากโครงสร้าง Yahoo Finance
+        headlines = [h.text for h in soup.find_all('h3') if len(h.text) > 10]
+        
+        for text in headlines[:num_news]:
+            score = analyzer.polarity_scores(text)['compound']
+            status = "🟢 Positive" if score > 0.05 else "🔴 Negative" if score < -0.05 else "⚪ Neutral"
+            news_list.append({"Headline": text, "Score": score, "Status": status})
+            
+        return news_list
     except:
-        return 0.0
+        return []
 
 # --- Header Section ---
-st.title("🔮 AI Stock Analysis Dashboard")
-st.markdown("Advanced prediction using **Deep Learning (Hybrid LSTM+GRU)** with Sentiment Integration.")
+st.title("🔮 AI Stock Analysis & News Dashboard")
+st.markdown("Deep Learning Prediction with **Dynamic News Feed Analysis**")
 
 # --- Sidebar Configuration ---
 st.sidebar.header("⚙️ Settings")
 stock_symbol = st.sidebar.text_input("Stock Ticker Symbol", "AAPL")
+num_news_to_show = st.sidebar.slider("Number of News to Analyze", 5, 20, 10) # เลือกจำนวนข่าวได้
 train_years = st.sidebar.slider("Historical Data (Years)", 1, 10, 5)
 epochs_num = st.sidebar.slider("Training Epochs", 10, 100, 30)
 
 if st.sidebar.button("Run Analysis & Prediction"):
-    # --- Start Timer ---
     start_time = time.time()
     
-    with st.spinner('AI is analyzing data and learning market patterns...'):
-        # 1. Data Acquisition
+    with st.spinner('Fetching market data and analyzing latest news...'):
+        # 1. Fetch News First
+        latest_news = get_detailed_news(stock_symbol, num_news_to_show)
+        avg_sentiment = np.mean([n['Score'] for n in latest_news]) if latest_news else 0.0
+        
+        # 2. Market Data Acquisition
         end_date = datetime.now()
         start_date = end_date - timedelta(days=train_years*365)
-        
         df_stock = yf.download(stock_symbol, start=start_date, end=end_date)
         df_market = yf.download("^GSPC", start=start_date, end=end_date)
 
         if df_stock.empty:
-            st.error("Error: Ticker symbol not found. Please try again.")
+            st.error("Ticker symbol not found.")
         else:
-            # Handle Multi-index DataFrames (New yfinance version)
+            # Data Handling for Multi-index
             if isinstance(df_stock.columns, pd.MultiIndex):
                 data = df_stock['Close'][stock_symbol].to_frame(name='Close')
                 data['Volume'] = df_stock['Volume'][stock_symbol]
@@ -64,7 +75,7 @@ if st.sidebar.button("Run Analysis & Prediction"):
                 market_close = df_market['Close']
 
             data['Market'] = market_close
-            data['Sentiment'] = get_sentiment(stock_symbol)
+            data['Sentiment'] = avg_sentiment # ใช้ค่าเฉลี่ยจากข่าวที่ดึงมา
             data.fillna(method='ffill', inplace=True)
 
             # Technical Indicators
@@ -76,11 +87,9 @@ if st.sidebar.button("Run Analysis & Prediction"):
             data['Target'] = data['Close'].shift(-1)
             data.dropna(inplace=True)
 
-            # 2. Data Preprocessing
+            # 3. Model Training (LSTM + GRU)
             features = ['Close', 'Volume', 'Market', 'SMA20', 'RSI', 'Sentiment']
-            scaler_X = RobustScaler()
-            scaler_y = RobustScaler()
-
+            scaler_X, scaler_y = RobustScaler(), RobustScaler()
             X_scaled = scaler_X.fit_transform(data[features])
             y_scaled = scaler_y.fit_transform(data[['Target']])
 
@@ -90,54 +99,45 @@ if st.sidebar.button("Run Analysis & Prediction"):
                 X_windows.append(X_scaled[i-lookback:i, :])
                 y_windows.append(y_scaled[i, 0])
 
-            X_windows, y_windows = np.array(X_windows), np.array(y_windows)
-            split = int(len(X_windows) * 0.8)
-            X_train, X_test = X_windows[:split], X_windows[split:]
-            y_train, y_test = y_windows[:split], y_windows[split:]
+            X_train = np.array(X_windows)
+            y_train = np.array(y_windows)
 
-            # 3. Model Building & Training
             model = Sequential([
                 Input(shape=(lookback, len(features))),
-                LSTM(100, return_sequences=True),
-                Dropout(0.2),
-                GRU(50, return_sequences=False),
-                Dense(25),
+                LSTM(64, return_sequences=True),
+                GRU(32),
                 Dense(1)
             ])
             model.compile(optimizer='adam', loss='mean_squared_error')
             model.fit(X_train, y_train, epochs=epochs_num, batch_size=32, verbose=0)
 
-            # 4. Forecasting
-            test_predictions = model.predict(X_test)
-            test_predictions_real = scaler_y.inverse_transform(test_predictions)
-            y_test_real = scaler_y.inverse_transform(y_test.reshape(-1, 1))
-            
+            # 4. Results calculation
             last_window = X_scaled[-lookback:].reshape(1, lookback, len(features))
             tomorrow_pred = scaler_y.inverse_transform(model.predict(last_window)).item()
             current_price = float(data['Close'].iloc[-1])
+            processing_time = time.time() - start_time
 
-            # --- End Timer ---
-            end_time = time.time()
-            processing_time = end_time - start_time
-
-            # 5. UI Display
-            st.success(f"Analysis Finished in {processing_time:.2f} seconds!")
+            # 5. Display Dashboard
+            st.success(f"Analysis Finished in {processing_time:.2f}s")
             
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Current Price", f"{current_price:.2f}")
-            col2.metric("AI Prediction", f"{tomorrow_pred:.2f}", f"{tomorrow_pred - current_price:.2f}")
-            col3.metric("Processing Time", f"{processing_time:.2f}s")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Current Price", f"{current_price:.2f}")
+            c2.metric("AI Prediction", f"{tomorrow_pred:.2f}", f"{tomorrow_pred - current_price:.2f}")
+            c3.metric("Avg Sentiment", f"{avg_sentiment:.2f}")
 
-            # Interactive Chart
-            st.subheader(f"📊 Market Trend Analysis: {stock_symbol}")
+            # Main Chart
+            st.subheader(f"📈 Market Trend: {stock_symbol}")
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=data.index[split+lookback:], y=y_test_real.flatten(), name="Market Price", line=dict(color='#00CC96')))
-            fig.add_trace(go.Scatter(x=data.index[split+lookback:], y=test_predictions_real.flatten(), name="AI Prediction", line=dict(color='#EF553B', dash='dot')))
-            fig.update_layout(hovermode="x unified", template="plotly_dark", xaxis_title="Timeline", yaxis_title="Price Value")
+            fig.add_trace(go.Scatter(x=data.index[-100:], y=data['Close'].tail(100), name="Actual Price"))
+            fig.update_layout(template="plotly_dark", height=400)
             st.plotly_chart(fig, use_container_width=True)
 
-            # Sentiment Note
-            st.info(f"💡 Current News Sentiment Score: {data['Sentiment'].iloc[-1]:.2f} (Calculated from recent headlines)")
+            # --- News Feed Section ---
+            st.subheader(f"📰 Latest {len(latest_news)} News Headlines")
+            for n in latest_news:
+                with st.expander(f"{n['Status']} | {n['Headline']}"):
+                    st.write(f"**Sentiment Score:** {n['Score']}")
+                    st.progress((n['Score'] + 1) / 2) # แสดงเป็นแถบพลัง
 
 else:
-    st.info("👈 Configure the settings and click 'Run Analysis' to generate the AI forecast.")
+    st.info("👈 Set the number of news and click 'Run Analysis'.")
