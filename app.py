@@ -11,10 +11,10 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 
-# --- ?????????????????? ---
+# --- Page Configuration ---
 st.set_page_config(page_title="AI Stock Predictor", layout="wide")
 
-# --- ????????????????????? ---
+# --- Sentiment Analysis Function ---
 def get_sentiment(ticker):
     analyzer = SentimentIntensityAnalyzer()
     url = f'https://finance.yahoo.com/quote/{ticker}/news'
@@ -28,19 +28,19 @@ def get_sentiment(ticker):
     except:
         return 0.0
 
-# --- ???? UI ??????? ---
-st.title("?? AI Stock Analysis Dashboard")
-st.markdown("??????????????????????? **Deep Learning (Hybrid LSTM+GRU)** ?????????????? Sentiment ???????")
+# --- Header Section ---
+st.title("🔮 AI Stock Analysis Dashboard")
+st.markdown("Predicting stock prices using **Deep Learning (Hybrid LSTM+GRU)** with News Sentiment Analysis.")
 
-# --- Sidebar ????????????? ---
-st.sidebar.header("?? ??????????")
-stock_symbol = st.sidebar.text_input("???????? (Ticker Symbol)", "AAPL")
-train_years = st.sidebar.slider("???????????????????????", 1, 10, 5)
-epochs_num = st.sidebar.slider("????????????????? (Epochs)", 10, 100, 30)
+# --- Sidebar Configuration ---
+st.sidebar.header("⚙️ Settings")
+stock_symbol = st.sidebar.text_input("Stock Ticker Symbol", "AAPL")
+train_years = st.sidebar.slider("Historical Data (Years)", 1, 10, 5)
+epochs_num = st.sidebar.slider("Training Epochs", 10, 100, 30)
 
-if st.sidebar.button("????????????????????????"):
-    with st.spinner('?????????????????????????? AI...'):
-        # 1. ?????????
+if st.sidebar.button("Run Analysis & Prediction"):
+    with st.spinner('Fetching data and training AI model...'):
+        # 1. Data Acquisition
         end_date = datetime.now()
         start_date = end_date - timedelta(days=train_years*365)
         
@@ -48,9 +48,9 @@ if st.sidebar.button("????????????????????????"):
         df_market = yf.download("^GSPC", start=start_date, end=end_date)
 
         if df_stock.empty:
-            st.error("??????????????? ???????????????? Ticker ????????")
+            st.error("Stock ticker not found. Please check the symbol again.")
         else:
-            # ???????????? Multi-index
+            # Handle Multi-index DataFrames
             if isinstance(df_stock.columns, pd.MultiIndex):
                 data = df_stock['Close'][stock_symbol].to_frame(name='Close')
                 data['Volume'] = df_stock['Volume'][stock_symbol]
@@ -63,7 +63,7 @@ if st.sidebar.button("????????????????????????"):
             data['Sentiment'] = get_sentiment(stock_symbol)
             data.fillna(method='ffill', inplace=True)
 
-            # ????? Indicators
+            # Technical Indicators
             data['SMA20'] = data['Close'].rolling(window=20).mean()
             delta = data['Close'].diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -72,7 +72,7 @@ if st.sidebar.button("????????????????????????"):
             data['Target'] = data['Close'].shift(-1)
             data.dropna(inplace=True)
 
-            # 2. ?????? Data ?????? AI
+            # 2. Data Preprocessing
             features = ['Close', 'Volume', 'Market', 'SMA20', 'RSI', 'Sentiment']
             scaler_X = RobustScaler()
             scaler_y = RobustScaler()
@@ -91,7 +91,7 @@ if st.sidebar.button("????????????????????????"):
             X_train, X_test = X_windows[:split], X_windows[split:]
             y_train, y_test = y_windows[:split], y_windows[split:]
 
-            # 3. ??????????? Model
+            # 3. Model Building & Training
             model = Sequential([
                 Input(shape=(lookback, len(features))),
                 LSTM(100, return_sequences=True),
@@ -103,7 +103,7 @@ if st.sidebar.button("????????????????????????"):
             model.compile(optimizer='adam', loss='mean_squared_error')
             model.fit(X_train, y_train, epochs=epochs_num, batch_size=32, verbose=0)
 
-            # 4. ???????
+            # 4. Forecasting
             test_predictions = model.predict(X_test)
             test_predictions_real = scaler_y.inverse_transform(test_predictions)
             y_test_real = scaler_y.inverse_transform(y_test.reshape(-1, 1))
@@ -112,21 +112,26 @@ if st.sidebar.button("????????????????????????"):
             tomorrow_pred = scaler_y.inverse_transform(model.predict(last_window)).item()
             current_price = float(data['Close'].iloc[-1])
 
-            # 5. ???????? Web
-            st.success("?????????????????????!")
+            # 5. Displaying Results
+            st.success("Analysis Complete!")
             
             col1, col2, col3 = st.columns(3)
-            col1.metric("?????????????", f"{current_price:.2f}")
-            col2.metric("AI ???????????????", f"{tomorrow_pred:.2f}", f"{tomorrow_pred - current_price:.2f}")
-            col3.metric("?????????? (Sentiment)", f"{data['Sentiment'].iloc[-1]:.2f}")
+            col1.metric("Last Close Price", f"{current_price:.2f}")
+            col2.metric("AI Prediction (Tomorrow)", f"{tomorrow_pred:.2f}", f"{tomorrow_pred - current_price:.2f}")
+            col3.metric("Market Sentiment Score", f"{data['Sentiment'].iloc[-1]:.2f}")
 
-            # ???? Interactive
-            st.subheader(f"?? ???????????? vs ??????? ({stock_symbol})")
+            # Interactive Plotly Chart
+            st.subheader(f"📊 Actual vs Predicted Price ({stock_symbol})")
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=data.index[split+lookback:], y=y_test_real.flatten(), name="Actual Price", line=dict(color='royalblue')))
             fig.add_trace(go.Scatter(x=data.index[split+lookback:], y=test_predictions_real.flatten(), name="AI Prediction", line=dict(color='firebrick', dash='dot')))
-            fig.update_layout(hovermode="x unified", template="plotly_dark")
+            fig.update_layout(
+                hovermode="x unified", 
+                template="plotly_dark",
+                xaxis_title="Date",
+                yaxis_title="Price"
+            )
             st.plotly_chart(fig, use_container_width=True)
 
 else:
-    st.info("?? ????????????????????? '??????????????' ????????????????????????")
+    st.info("👈 Enter a stock ticker and click 'Run Analysis' on the sidebar to begin.")
