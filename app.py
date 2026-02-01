@@ -3,6 +3,7 @@ import yfinance as yf
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import time
 from sklearn.preprocessing import RobustScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, GRU, Dense, Dropout, Input
@@ -12,7 +13,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 
 # --- Page Configuration ---
-st.set_page_config(page_title="AI Stock Predictor", layout="wide")
+st.set_page_config(page_title="AI Stock Predictor Pro", layout="wide")
 
 # --- Sentiment Analysis Function ---
 def get_sentiment(ticker):
@@ -30,7 +31,7 @@ def get_sentiment(ticker):
 
 # --- Header Section ---
 st.title("🔮 AI Stock Analysis Dashboard")
-st.markdown("Predicting stock prices using **Deep Learning (Hybrid LSTM+GRU)** with News Sentiment Analysis.")
+st.markdown("Advanced prediction using **Deep Learning (Hybrid LSTM+GRU)** with Sentiment Integration.")
 
 # --- Sidebar Configuration ---
 st.sidebar.header("⚙️ Settings")
@@ -39,7 +40,10 @@ train_years = st.sidebar.slider("Historical Data (Years)", 1, 10, 5)
 epochs_num = st.sidebar.slider("Training Epochs", 10, 100, 30)
 
 if st.sidebar.button("Run Analysis & Prediction"):
-    with st.spinner('Fetching data and training AI model...'):
+    # --- Start Timer ---
+    start_time = time.time()
+    
+    with st.spinner('AI is analyzing data and learning market patterns...'):
         # 1. Data Acquisition
         end_date = datetime.now()
         start_date = end_date - timedelta(days=train_years*365)
@@ -48,9 +52,9 @@ if st.sidebar.button("Run Analysis & Prediction"):
         df_market = yf.download("^GSPC", start=start_date, end=end_date)
 
         if df_stock.empty:
-            st.error("Stock ticker not found. Please check the symbol again.")
+            st.error("Error: Ticker symbol not found. Please try again.")
         else:
-            # Handle Multi-index DataFrames
+            # Handle Multi-index DataFrames (New yfinance version)
             if isinstance(df_stock.columns, pd.MultiIndex):
                 data = df_stock['Close'][stock_symbol].to_frame(name='Close')
                 data['Volume'] = df_stock['Volume'][stock_symbol]
@@ -112,26 +116,28 @@ if st.sidebar.button("Run Analysis & Prediction"):
             tomorrow_pred = scaler_y.inverse_transform(model.predict(last_window)).item()
             current_price = float(data['Close'].iloc[-1])
 
-            # 5. Displaying Results
-            st.success("Analysis Complete!")
+            # --- End Timer ---
+            end_time = time.time()
+            processing_time = end_time - start_time
+
+            # 5. UI Display
+            st.success(f"Analysis Finished in {processing_time:.2f} seconds!")
             
             col1, col2, col3 = st.columns(3)
-            col1.metric("Last Close Price", f"{current_price:.2f}")
-            col2.metric("AI Prediction (Tomorrow)", f"{tomorrow_pred:.2f}", f"{tomorrow_pred - current_price:.2f}")
-            col3.metric("Market Sentiment Score", f"{data['Sentiment'].iloc[-1]:.2f}")
+            col1.metric("Current Price", f"{current_price:.2f}")
+            col2.metric("AI Prediction", f"{tomorrow_pred:.2f}", f"{tomorrow_pred - current_price:.2f}")
+            col3.metric("Processing Time", f"{processing_time:.2f}s")
 
-            # Interactive Plotly Chart
-            st.subheader(f"📊 Actual vs Predicted Price ({stock_symbol})")
+            # Interactive Chart
+            st.subheader(f"📊 Market Trend Analysis: {stock_symbol}")
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=data.index[split+lookback:], y=y_test_real.flatten(), name="Actual Price", line=dict(color='royalblue')))
-            fig.add_trace(go.Scatter(x=data.index[split+lookback:], y=test_predictions_real.flatten(), name="AI Prediction", line=dict(color='firebrick', dash='dot')))
-            fig.update_layout(
-                hovermode="x unified", 
-                template="plotly_dark",
-                xaxis_title="Date",
-                yaxis_title="Price"
-            )
+            fig.add_trace(go.Scatter(x=data.index[split+lookback:], y=y_test_real.flatten(), name="Market Price", line=dict(color='#00CC96')))
+            fig.add_trace(go.Scatter(x=data.index[split+lookback:], y=test_predictions_real.flatten(), name="AI Prediction", line=dict(color='#EF553B', dash='dot')))
+            fig.update_layout(hovermode="x unified", template="plotly_dark", xaxis_title="Timeline", yaxis_title="Price Value")
             st.plotly_chart(fig, use_container_width=True)
 
+            # Sentiment Note
+            st.info(f"💡 Current News Sentiment Score: {data['Sentiment'].iloc[-1]:.2f} (Calculated from recent headlines)")
+
 else:
-    st.info("👈 Enter a stock ticker and click 'Run Analysis' on the sidebar to begin.")
+    st.info("👈 Configure the settings and click 'Run Analysis' to generate the AI forecast.")
